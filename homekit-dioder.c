@@ -14,7 +14,7 @@
 
 #include <homekit/homekit.h>
 #include <homekit/characteristics.h>
-#include "wifi.h"
+#include <wifi_config.h>
 
 #include "converters.h"
 #include "multipwm.h"
@@ -40,19 +40,8 @@ int hkc_brightness = 100;
 bool hkw_on = true;
 int hkw_brightness = 100;
 
-static void wifi_init() {
-    struct sdk_station_config wifi_config = {
-        .ssid = WIFI_SSID,
-        .password = WIFI_PASSWORD,
-    };
-
-    sdk_wifi_set_opmode(STATION_MODE);
-    sdk_wifi_station_set_config(&wifi_config);
-    sdk_wifi_station_connect();
-}
-
 void update_pwm() {
-    int white_pin_value = 0;
+    uint16_t white_pin_value = 0;
 
     if (hkw_on) {
         white_pin_value = map(hkw_brightness, 0, 100, 0, UINT16_MAX);
@@ -60,9 +49,9 @@ void update_pwm() {
 
     multipwm_set_duty(&pwm_info, 0, white_pin_value);
     
-    int red_pin_value = 0;
-    int green_pin_value = 0;
-    int blue_pin_value = 0;
+    uint16_t red_pin_value = 0;
+    uint16_t green_pin_value = 0;
+    uint16_t blue_pin_value = 0;
     if (hkc_on) {
         int r, g, b;
         float dim = hkc_brightness / 100.0f;
@@ -95,21 +84,15 @@ void init_pwm() {
 }
 
 void identify_task(void *_args) {
-    // initialise the onboard led as a secondary indicator (handy for testing)
-    gpio_enable(LED_INBUILT_GPIO, GPIO_OUTPUT);
-
     for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
+        for (int j = 0; j < 9; j++) {
             gpio_write(LED_INBUILT_GPIO, 0);
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
             gpio_write(LED_INBUILT_GPIO, 1);
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
         }
         vTaskDelay(250 / portTICK_PERIOD_MS);
     }
-
-    gpio_write(LED_INBUILT_GPIO, 1);
-
     vTaskDelete(NULL);
 }
 
@@ -186,10 +169,10 @@ homekit_accessory_t *accessories[] = {
         .services = (homekit_service_t*[]) {
         HOMEKIT_SERVICE(ACCESSORY_INFORMATION, .characteristics = (homekit_characteristic_t*[]) {
             &name,
-            HOMEKIT_CHARACTERISTIC(MANUFACTURER, "Generic"),
-            HOMEKIT_CHARACTERISTIC(SERIAL_NUMBER, "3f620465b61d"),
-            HOMEKIT_CHARACTERISTIC(MODEL, "DioderDator"),
-            HOMEKIT_CHARACTERISTIC(FIRMWARE_REVISION, "0.1"),
+            HOMEKIT_CHARACTERISTIC(MANUFACTURER, "John Hug"),
+            HOMEKIT_CHARACTERISTIC(SERIAL_NUMBER, "cff304ed581c"),
+            HOMEKIT_CHARACTERISTIC(MODEL, "Dioder-Dator"),
+            HOMEKIT_CHARACTERISTIC(FIRMWARE_REVISION, "0.5"),
             HOMEKIT_CHARACTERISTIC(IDENTIFY, identify),
             NULL
         }),
@@ -236,27 +219,37 @@ homekit_accessory_t *accessories[] = {
     NULL
 };
 
+void on_homekit_event(homekit_event_t event) {
+    if (event == HOMEKIT_EVENT_CLIENT_VERIFIED) {
+        identify(HOMEKIT_INT(1));    
+    }
+}
+
 homekit_server_config_t config = {
     .accessories = accessories,
-    .password = "111-11-111"
+    .category = homekit_accessory_category_lightbulb,
+    .password = "816-26-028",
+    .setupId = "37CB",
+    .on_event = on_homekit_event
 };
 
+void on_wifi_ready() {
+    identify(HOMEKIT_INT(1));    
+}
+
 void user_init(void) {
-    // This example shows how to use same firmware for multiple similar accessories
-    // without name conflicts. It uses the last 3 bytes of accessory's MAC address as
-    // accessory name suffix.
-    uint8_t macaddr[6];
-    sdk_wifi_get_macaddr(STATION_IF, macaddr);
-    int name_len = snprintf(NULL, 0, "Kamaji-%02X%02X%02X", macaddr[3], macaddr[4], macaddr[5]);
-    char *name_value = malloc(name_len + 1);
-    snprintf(name_value, name_len + 1, "Kamaji-%02X%02X%02X", macaddr[3], macaddr[4], macaddr[5]);
-    name.value = HOMEKIT_STRING(name_value);
+    gpio_enable(LED_INBUILT_GPIO, GPIO_OUTPUT);
 
-    wifi_init();
-
-    homekit_server_init(&config);
-    
     init_pwm();
 
-    identify(HOMEKIT_INT(1));
+    wifi_config_init("Kamaji", NULL, on_wifi_ready);
+
+    uint8_t macaddr[6];
+    sdk_wifi_get_macaddr(STATION_IF, macaddr);
+    int name_len = 6 + 1 + 6 + 1;
+    char *name_value = malloc(name_len);
+    snprintf(name_value, name_len, "Kamaji-%02X%02X%02X", macaddr[3], macaddr[4], macaddr[5]);
+    name.value = HOMEKIT_STRING(name_value);
+ 
+    homekit_server_init(&config);
 }
